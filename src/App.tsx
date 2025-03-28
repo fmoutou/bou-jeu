@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 // Pas d'import d'icônes externe
 
 // --- Icônes SVG Internes (Validation/Inventaire) ---
@@ -38,18 +38,14 @@ const InterdictionIcon = ({ className = "w-16 h-16" }: { className?: string }) =
 
 const ObligationIcon = ({ className = "w-16 h-16" }: { className?: string }) => (
   <svg viewBox="0 0 100 100" className={className} aria-label="Panneau Obligation">
-    {/* Cercle extérieur blanc pour simuler la bordure fine */}
     <circle cx="50" cy="50" r="50" fill="white" />
-     {/* Cercle bleu intérieur */}
     <circle cx="50" cy="50" r="46" fill={primaryColor} />
   </svg>
 );
 
 const IndicationIcon = ({ className = "w-16 h-16" }: { className?: string }) => (
   <svg viewBox="0 0 100 100" className={className} aria-label="Panneau Indication">
-     {/* Rectangle extérieur blanc pour simuler la bordure fine */}
     <rect x="0" y="0" width="100" height="100" fill="white" />
-     {/* Rectangle bleu intérieur */}
     <rect x="4" y="4" width="92" height="92" fill={primaryColor} />
   </svg>
 );
@@ -58,15 +54,6 @@ const IndicationIcon = ({ className = "w-16 h-16" }: { className?: string }) => 
 
 // --- Couleurs ---
 const primaryColor = '#4682B4'; // Bleu Acier
-const secondaryColor = '#708090';
-const successColor = '#5cb85c';
-const dangerColor = '#d9534f';
-const warningColor = '#f0ad4e';
-const infoColor = '#5bc0de';
-const lightColor = '#f5f5f5';
-const darkColor = '#333';
-const mutedColor = '#777';
-const highlightColor = '#e6f7ff';
 const lightGreenColor = '#e7f4e7';
 const instructionsBgColor = '#f3f4f6';
 const tipsBgColor = '#fef9c3';
@@ -91,16 +78,35 @@ const resourceNamesFR = {
 const initialResources = {
   money: 1250,
   oxygen: 300,
-  time: 690
+  time: 800 // Ajusté
 };
+
+// --- Taux d'échange constants ---
+const exchangeRates = {
+    moneyToOxygen: { amountFrom: 100, amountTo: 10 }, // Ajusté
+    moneyToTime:   { amountFrom: 100, amountTo: 10 }, // Inchangé
+    timeToMoney:   { amountFrom: 100, amountTo: 10 }, // Ajusté
+    oxygenToMoney: { amountFrom: 50, amountTo: 10 },  // Ajusté
+};
+
+
+// --- Types ---
+interface Vehicle {
+    name: string;
+    money: number;
+    oxygen: number;
+    time: number;
+    icon: string;
+    availableFromStep?: number;
+}
+
+type ResourceType = keyof typeof initialResources;
 
 const BouJeuApp = () => {
   const [currentPage, setCurrentPage] = useState('splash'); // Page actuelle
   const [currentStep, setCurrentStep] = useState(1); // Étape actuelle
   const [resources, setResources] = useState({ ...initialResources }); // Ressources du joueur
-  // <<< MODIFICATION ICI : Nouvel état pour les ressources au début de l'étape >>>
   const [resourcesAtStepStart, setResourcesAtStepStart] = useState({ ...initialResources }); // Ressources au début de l'étape actuelle
-  // <<< FIN MODIFICATION >>>
   const [inventory, setInventory] = useState({ // Inventaire
     baton: false,
     sphere: false,
@@ -126,17 +132,19 @@ const BouJeuApp = () => {
   const [showVehicleConfirmation, setShowVehicleConfirmation] = useState(false); // Modal confirmation véhicule
   const [showPortalModal, setShowPortalModal] = useState(false); // Modal détails portail
   const [selectedPortalCode, setSelectedPortalCode] = useState<string | null>(null); // Code portail sélectionné
-
-  // --- État pour la confirmation d'échange ---
   const [showExchangeConfirmation, setShowExchangeConfirmation] = useState(false);
   const [exchangeDetails, setExchangeDetails] = useState<{
-    from: keyof typeof resources;
-    to: keyof typeof resources;
+    from: ResourceType;
+    to: ResourceType;
     amountFrom: number;
     amountTo: number;
     fromResourceFR: string;
     toResourceFR: string;
   } | null>(null);
+
+  const [showNoMovesModal, setShowNoMovesModal] = useState(false); // Afficher la modale de blocage
+  const [gameOverReason, setGameOverReason] = useState<'portal' | 'resources' | null>(null); // Raison du game over
+
 
   // Objets de l'inventaire
   const inventoryItems = {
@@ -146,7 +154,7 @@ const BouJeuApp = () => {
   };
 
   // Véhicules disponibles
-  const vehicles = {
+  const vehicles: { [key: string]: Vehicle } = {
     foot: { name: 'À pied', money: 150, oxygen: 60, time: 600, icon: '🚶' },
     bike: { name: 'À vélo', money: 300, oxygen: 90, time: 450, icon: '🚲' },
     bus: { name: 'En transports en commun', money: 600, oxygen: 120, time: 330, icon: '🚌' },
@@ -173,12 +181,83 @@ const BouJeuApp = () => {
     window.scrollTo(0, 0);
   }, [currentPage]);
 
-  // <<< MODIFICATION ICI : Mémoriser les ressources au début de chaque étape >>>
+  // Mémoriser les ressources au début de chaque étape
   useEffect(() => {
-    // Met à jour les ressources de référence lorsque l'étape change
     setResourcesAtStepStart(resources);
-  }, [currentStep]); // Se déclenche quand currentStep change
+  }, [currentStep]);
+
+  // <<< MODIFICATION : Logique canAffordAnyVehicle Corrigée >>>
+  // Fonction pour vérifier si un véhicule est achetable, même potentiellement (logique corrigée)
+  const canAffordAnyVehicle = (currentResources: typeof resources, step: number): boolean => {
+    for (const key in vehicles) {
+        const vehicle = vehicles[key];
+        const isStepAvailable = !vehicle.availableFromStep || step >= vehicle.availableFromStep;
+
+        if (isStepAvailable) {
+            // 1. Vérifier l'achat direct
+            if (currentResources.money >= vehicle.money && currentResources.oxygen >= vehicle.oxygen && currentResources.time >= vehicle.time) {
+                console.log(`CAN AFFORD CHECK: Véhicule ${vehicle.name} achetable directement.`);
+                return true;
+            }
+
+            // 2. Vérification d'achat potentiel réaliste (utilisant les surplus)
+            const moneyDeficit = Math.max(0, vehicle.money - currentResources.money);
+            const oxygenDeficit = Math.max(0, vehicle.oxygen - currentResources.oxygen);
+            const timeDeficit = Math.max(0, vehicle.time - currentResources.time);
+
+            // Surplus après avoir payé le coût de base DANS CETTE RESSOURCE
+            const moneySurplus = Math.max(0, currentResources.money - vehicle.money);
+            const oxygenSurplus = Math.max(0, currentResources.oxygen - vehicle.oxygen);
+            const timeSurplus = Math.max(0, currentResources.time - vehicle.time);
+
+            let canCoverMoney = moneyDeficit === 0;
+            if (moneyDeficit > 0) {
+                const moneyFromOxygen = Math.floor(oxygenSurplus / exchangeRates.oxygenToMoney.amountFrom) * exchangeRates.oxygenToMoney.amountTo;
+                const moneyFromTime = Math.floor(timeSurplus / exchangeRates.timeToMoney.amountFrom) * exchangeRates.timeToMoney.amountTo;
+                if (moneyFromOxygen + moneyFromTime >= moneyDeficit) {
+                    canCoverMoney = true;
+                }
+            }
+
+            let canCoverOxygen = oxygenDeficit === 0;
+            if (oxygenDeficit > 0) {
+                const oxygenFromMoney = Math.floor(moneySurplus / exchangeRates.moneyToOxygen.amountFrom) * exchangeRates.moneyToOxygen.amountTo;
+                if (oxygenFromMoney >= oxygenDeficit) {
+                    canCoverOxygen = true;
+                }
+            }
+
+            let canCoverTime = timeDeficit === 0;
+            if (timeDeficit > 0) {
+                const timeFromMoney = Math.floor(moneySurplus / exchangeRates.moneyToTime.amountFrom) * exchangeRates.moneyToTime.amountTo;
+                if (timeFromMoney >= timeDeficit) {
+                    canCoverTime = true;
+                }
+            }
+
+            if (canCoverMoney && canCoverOxygen && canCoverTime) {
+                 console.log(`CAN AFFORD CHECK: Véhicule ${vehicle.name} potentiellement achetable (via surplus).`);
+                return true;
+            }
+        }
+    }
+
+    console.log("CAN AFFORD CHECK: Aucun véhicule achetable, même potentiellement.");
+    return false;
+  };
   // <<< FIN MODIFICATION >>>
+
+
+  // Vérifier la possibilité de continuer
+  useEffect(() => {
+    if (currentPage === 'game' && !currentVehicle && !showNoMovesModal && !showCelebration) {
+      // Utilise la fonction corrigée
+      if (!canAffordAnyVehicle(resources, currentStep)) {
+        setMessage("Il semble que vous soyez à court de ressources pour continuer...");
+        setShowNoMovesModal(true);
+      }
+    }
+  }, [resources, currentPage, currentVehicle, currentStep, showNoMovesModal, showCelebration]);
 
 
   // Initier l'achat de véhicule
@@ -189,7 +268,7 @@ const BouJeuApp = () => {
 
   // Confirmer l'achat de véhicule
   const confirmVehicle = (vehicleType: string) => {
-    const vehicle = vehicles[vehicleType as keyof typeof vehicles];
+    const vehicle = vehicles[vehicleType];
     if (resources.money >= vehicle.money && resources.oxygen >= vehicle.oxygen && resources.time >= vehicle.time) {
       setResources(prevResources => ({
         money: prevResources.money - vehicle.money,
@@ -197,7 +276,7 @@ const BouJeuApp = () => {
         time: prevResources.time - vehicle.time
       }));
       setCurrentVehicle(vehicleType);
-      setVehicleHistory(prevHistory => [...prevHistory, vehicleType]); // Ajout à l'historique
+      setVehicleHistory(prevHistory => [...prevHistory, vehicleType]);
       setMessage(`Vous avez choisi de voyager ${vehicle.name}!`);
       if (currentStep === 1 && !inventory.baton) { setShowCodeInput(true); setCodeToCheck('code2'); }
       else if (currentStep === 2 && !inventory.sphere) { setShowCodeInput(true); setCodeToCheck('code3'); }
@@ -212,41 +291,31 @@ const BouJeuApp = () => {
   };
 
   // Initier l'échange de ressources
-  const exchangeResources = (from: string, to: string) => {
-    const rates = {
-      moneyToOxygen: { amountFrom: 200, amountTo: 10 },
-      moneyToTime: { amountFrom: 100, amountTo: 10 },
-      timeToMoney: { amountFrom: 200, amountTo: 10 },
-      oxygenToMoney: { amountFrom: 100, amountTo: 10 },
-    };
-    let fromKey: keyof typeof resources | null = null, toKey: keyof typeof resources | null = null;
+  const exchangeResources = (from: ResourceType, to: ResourceType) => {
+    // Utilise les taux d'échange constants
     let amountFrom = 0;
     let amountTo = 0;
     let fromFR = '', toFR = '';
 
     if (from === 'money' && to === 'oxygen') {
-        fromKey = 'money'; toKey = 'oxygen';
-        amountFrom = rates.moneyToOxygen.amountFrom; amountTo = rates.moneyToOxygen.amountTo;
+        amountFrom = exchangeRates.moneyToOxygen.amountFrom; amountTo = exchangeRates.moneyToOxygen.amountTo;
         fromFR = resourceNamesFR.money; toFR = resourceNamesFR.oxygen;
     }
     else if (from === 'money' && to === 'time') {
-        fromKey = 'money'; toKey = 'time';
-        amountFrom = rates.moneyToTime.amountFrom; amountTo = rates.moneyToTime.amountTo;
+        amountFrom = exchangeRates.moneyToTime.amountFrom; amountTo = exchangeRates.moneyToTime.amountTo;
         fromFR = resourceNamesFR.money; toFR = resourceNamesFR.time;
     }
     else if (from === 'time' && to === 'money') {
-        fromKey = 'time'; toKey = 'money';
-        amountFrom = rates.timeToMoney.amountFrom; amountTo = rates.timeToMoney.amountTo;
+        amountFrom = exchangeRates.timeToMoney.amountFrom; amountTo = exchangeRates.timeToMoney.amountTo;
         fromFR = resourceNamesFR.time; toFR = resourceNamesFR.money;
     }
     else if (from === 'oxygen' && to === 'money') {
-        fromKey = 'oxygen'; toKey = 'money';
-        amountFrom = rates.oxygenToMoney.amountFrom; amountTo = rates.oxygenToMoney.amountTo;
+        amountFrom = exchangeRates.oxygenToMoney.amountFrom; amountTo = exchangeRates.oxygenToMoney.amountTo;
         fromFR = resourceNamesFR.oxygen; toFR = resourceNamesFR.money;
     }
     else return;
 
-    setExchangeDetails({ from: fromKey, to: toKey, amountFrom: amountFrom, amountTo: amountTo, fromResourceFR: fromFR, toResourceFR: toFR });
+    setExchangeDetails({ from: from, to: to, amountFrom: amountFrom, amountTo: amountTo, fromResourceFR: fromFR, toResourceFR: toFR });
     setShowExchangeConfirmation(true);
   };
 
@@ -273,29 +342,24 @@ const BouJeuApp = () => {
       code2: ['5041'], code3: ['8664', '2695', '7298', '3289', '4295', '4896'],
       code4: ['6729'], portal: ['5703']
     };
-    // Redirection vers la confirmation pour le code portail
     if (codeToCheck === 'portal') {
-      // La vérification réelle se fera dans confirmFinalCode après confirmation
       setShowFinalConfirmation(true);
-      return; // Ne pas exécuter le reste de la fonction checkCode
+      return;
     }
 
-    // Pour les autres codes
-    if (correctCodes[codeToCheck as keyof typeof correctCodes].includes(inputCode)) {
+    if (correctCodes[codeToCheck as keyof typeof correctCodes]?.includes(inputCode)) {
       let nextStep = currentStep, newMessage = '', newInventory = { ...inventory };
-      let rewardKey = null;
+      let rewardKey: keyof typeof questRewards | null = null;
 
       if (codeToCheck === 'code2' && !inventory.baton) { newInventory.baton = true; newMessage = "Bâton d'Ubiquité trouvé !"; nextStep = 2; rewardKey = 2; }
       else if (codeToCheck === 'code3' && !inventory.sphere) { newInventory.sphere = true; newMessage = "Sphère de Vision trouvée !"; nextStep = 3; rewardKey = 3; }
       else if (codeToCheck === 'code4' && !inventory.cauldron) { newInventory.cauldron = true; newMessage = "Chaudron d'Infinité trouvé !"; nextStep = 4; rewardKey = 4; }
 
-      // Appliquer les récompenses si une clé de récompense a été définie
-      if (rewardKey && questRewards[rewardKey as keyof typeof questRewards]) {
-        const reward = questRewards[rewardKey as keyof typeof questRewards];
-        setRewards(reward); // Sauvegarder les récompenses pour le modal
-        setCelebrationMessage(celebrationMessages[nextStep as keyof typeof celebrationMessages]); // Définir le message de célébration
-        setShowCelebration(true); // Afficher le modal de célébration
-        // Ajouter les récompenses aux ressources du joueur
+      if (rewardKey && questRewards[rewardKey]) {
+        const reward = questRewards[rewardKey];
+        setRewards(reward);
+        setCelebrationMessage(celebrationMessages[nextStep as keyof typeof celebrationMessages] || '');
+        setShowCelebration(true);
         setResources(prev => ({
           money: prev.money + reward.money,
           oxygen: prev.oxygen + reward.oxygen,
@@ -303,13 +367,12 @@ const BouJeuApp = () => {
         }));
       }
 
-      // Mettre à jour l'état du jeu
       setInventory(newInventory); setMessage(newMessage); setCurrentStep(nextStep);
-      setCodes({ ...codes, [codeToCheck]: inputCode }); // Sauvegarder le code entré
-      setShowCodeInput(false); // Cacher le champ de saisie
-      setInputCode(''); // Réinitialiser le champ de saisie
-      setCurrentVehicle(null); // Réinitialiser le véhicule
-      setCurrentPage('game'); // Retourner à la page principale du jeu
+      setCodes({ ...codes, [codeToCheck]: inputCode });
+      setShowCodeInput(false);
+      setInputCode('');
+      setCurrentVehicle(null);
+      setCurrentPage('game');
     } else {
       setMessage('Code incorrect. Essayez encore !');
     }
@@ -319,13 +382,22 @@ const BouJeuApp = () => {
   const confirmFinalCode = () => {
     const correctCodes = { portal: ['5703'] };
     if (correctCodes.portal.includes(inputCode)) {
-      setCurrentPage('victory'); // Page de victoire si le code est correct
+      setCurrentPage('victory');
     } else {
-      setCurrentPage('gameover'); // Page de game over si incorrect
+      setGameOverReason('portal');
+      setCurrentPage('gameover');
     }
-    setShowFinalConfirmation(false); // Fermer le modal de confirmation
-    setShowCodeInput(false); // S'assurer que la saisie est cachée
+    setShowFinalConfirmation(false);
+    setShowCodeInput(false);
   };
+
+  // Confirmer le game over par blocage
+  const handleConfirmNoMoves = () => {
+    setGameOverReason('resources');
+    setShowNoMovesModal(false);
+    setCurrentPage('gameover');
+  }
+
 
   // Mise à jour de l'objectif
   useEffect(() => {
@@ -343,17 +415,19 @@ const BouJeuApp = () => {
   // Réinitialiser le jeu
   const resetGame = () => {
     setCurrentPage('splash'); setCurrentStep(1);
-    setResources({ ...initialResources }); // Utiliser les valeurs initiales
+    setResources({ ...initialResources });
     setInventory({ baton: false, sphere: false, cauldron: false });
     setCurrentVehicle(null);
-    setVehicleHistory([]); // Réinitialiser l'historique
+    setVehicleHistory([]);
     setCodes({ code2: '', code3: '', code4: '', portalCode: '' });
     setInputCode(''); setMessage(''); setShowCodeInput(false); setCodeToCheck('');
     setShowCelebration(false); setCelebrationMessage(''); setRewards(null);
     setShowFinalConfirmation(false); setShowPortalModal(false); setSelectedPortalCode(null);
     setShowVehicleConfirmation(false); setVehicleToConfirm(null);
     setShowExchangeConfirmation(false); setExchangeDetails(null);
-    setResourcesAtStepStart({ ...initialResources }); // Réinitialiser aussi l'état de référence
+    setResourcesAtStepStart({ ...initialResources });
+    setShowNoMovesModal(false);
+    setGameOverReason(null);
   };
 
 
@@ -372,9 +446,18 @@ const BouJeuApp = () => {
     '5730': { name: 'La Cathédrale de Nevers', image: 'https://lh5.googleusercontent.com/TcDEgSERi6rHHdOSiEzb66MLUlHP_Z0PqwYSXFUFYyb1HBdQhQo3rIOnwxNRsKi05Z4N_OZydddZMbvBNLIU81wM9phO4mMXe2jrsR-kUSUMzc2liHmU74VL-mB0lmubNsJW4u5H5EQ=w740', description: "Cathédrale Saint-Cyr-et-Sainte-Julitte, remarquable par ses deux chœurs opposés, roman et gothique, et ses vitraux contemporains." },
     '5370': { name: 'Les Viaducs de Morez', image: 'https://lh5.googleusercontent.com/Sd3CIpCgbdDUQuguqHRWxSQaM4YutgHWCqNVcHQYryrDIlXP5eIhsyV4ByRwwglc000-0-AxtwvSJvgjFvs4UC7PHTyFg3cgqtiJAfiump2la5iMPgxC7eFSfzuX9hKT8B6QdnUtm-U=w740', description: "Ensemble de viaducs ferroviaires spectaculaires dans le Haut-Jura, permettant à la ligne des Hirondelles de franchir la vallée de la Bienne." }
   };
+  type PortalCodeType = keyof typeof portalChoices;
+
 
   // Ouvrir modal détails portail
-  const openPortalModal = (code: string) => { setSelectedPortalCode(code); setShowPortalModal(true); };
+  const openPortalModal = (code: string) => {
+    if (code in portalChoices) {
+        setSelectedPortalCode(code as PortalCodeType);
+        setShowPortalModal(true);
+    } else {
+        console.error("Code de portail invalide :", code);
+    }
+ };
   // Fermer modal détails portail
   const closePortalModal = () => { setShowPortalModal(false); setSelectedPortalCode(null); };
 
@@ -394,7 +477,7 @@ const BouJeuApp = () => {
     );
   }
 
-  // En-tête (ne s'affiche pas sur splash, victory, gameover, home)
+  // En-tête
   const renderHeader = () => {
     if (currentPage !== 'splash' && currentPage !== 'victory' && currentPage !== 'gameover' && currentPage !== 'home') {
       return (
@@ -465,7 +548,7 @@ const BouJeuApp = () => {
                  </ul>
                 <p className="mb-2 text-[#333]">
                   Chaque véhicule a un coût. Choisissez bien !
-                  Vous pouvez échanger vos ressources, mais ça coûte très cher.
+                  Vous pouvez échanger vos ressources, mais attention aux taux de change.
                 </p>
                 <p className="mb-0 text-[#333]">
                   <span className="font-bold">Pour finir, répondez à l'énigme de chaque étape.</span>
@@ -516,7 +599,7 @@ const BouJeuApp = () => {
         {currentVehicle && (
           <div style={{ backgroundColor: lightGreenColor }} className="rounded-lg shadow-md p-4 mb-4 text-center text-[#333]">
             <h3 className="text-lg font-bold mb-2 text-[#4682B4]">Votre véhicule actuel</h3>
-            <p className="mb-2">{vehicles[currentVehicle as keyof typeof vehicles].icon} {vehicles[currentVehicle as keyof typeof vehicles].name}</p>
+            <p className="mb-2">{vehicles[currentVehicle].icon} {vehicles[currentVehicle].name}</p>
             <p className="font-bold mt-3">Ressources restantes :</p>
             <div className="flex flex-wrap justify-center gap-x-4 gap-y-1 mt-1">
               <span>{resourceIcons.money} {resources.money}</span>
@@ -550,7 +633,6 @@ const BouJeuApp = () => {
                     <li>Attention, certains panneaux se ressemblent !</li>
                   </ul>
                   <div className="flex flex-wrap justify-around items-start text-center gap-4 mt-4 pt-4 border-t border-yellow-300">
-                     {/* Ajout marge sup et bordure sup */}
                     <div className="flex flex-col items-center w-1/5">
                       <DangerIcon className="w-12 h-12 mb-1" />
                       <p className="text-xs font-semibold text-gray-700">Danger</p>
@@ -576,7 +658,7 @@ const BouJeuApp = () => {
           {currentStep === 2 && (
             <>
               <p className="mb-4 text-[#333]">
-                Les Bous ont ne se sentent pas bien et doivent absolument prendre le bus. Comme ils sont très nombreux,
+                Les Bous ne se sentent pas bien et doivent absolument prendre le bus. Comme ils sont très nombreux,
                 il faudra prendre plusieurs bus !
                 Mais, attention, il faut faire vite sans rater des informations importantes. Donc, prenons
                 les bus qui passent seulement par les villes de notre trajet.
@@ -610,11 +692,11 @@ const BouJeuApp = () => {
                  Nous avons une liste de tâches bizarres à faire. Restons vigilants : Elles sont peut-être très importantes !
                </p>
                <ol className="list-decimal space-y-2 ml-5 text-[#333]">
-                 <li>📄 Préparez : une feuille, un stylo et votre téléphone.</li>
-                 <li>🚍 <strong>Bus (Divia) :</strong> Trouvez l'heure du prochain bus <strong>Place du 30 Octobre ➡️ Gare SNCF</strong>. Notez l'heure de départ et d'arrivée.</li>
-                 <li>🚆 <strong>Train (SNCF Connect) :</strong> Trouvez l'heure du prochain train <strong>Dijon ➡️ Besançon</strong>. Notez l'heure de départ et d'arrivée.</li>
-                 <li>🚌 <strong>Car (Mobigo) :</strong> Trouvez un car <strong>Besançon (Centre St-Pierre) ➡️ Vesoul (Pôle Multimodal - Gare)</strong>. Notez le temps de trajet et le numéro de la ligne.</li>
-                 <li>🚗 <strong>Covoiturage (Blablacar) :</strong> Ouvrez l'appli/site Blablacar. Trouvez un trajet <strong>Vesoul ➡️ Dijon</strong> et notez l'heure du premier départ proposé.</li>
+                 <li>📄 Préparez : une <strong>feuille</strong>, un <strong>stylo</strong> et votre <strong>téléphone</strong>.</li>
+                 <li>🚍 <strong>Bus :</strong> Ouvrez l'appli/site <strong>Divia</strong>. Trouvez l'heure du prochain bus <strong>Place du 30 Octobre ➡️ Gare SNCF</strong>. Notez l'heure de départ et d'arrivée.</li>
+                 <li>🚆 <strong>Train :</strong> Ouvrez l'appli/site <strong>SNCF Connect</strong>. Trouvez l'heure du prochain train <strong>Dijon ➡️ Besançon</strong>. Notez l'heure de départ et d'arrivée.</li>
+                 <li>🚌 <strong>Car :</strong> Ouvrez l'appli/site <strong>Mobigo</strong>. Trouvez un car <strong>Besançon (Centre St-Pierre) ➡️ Vesoul (Pôle Multimodal - Gare)</strong>. Notez l'heure de départ et d'arrivée.</li>
+                 <li>🚗 <strong>Covoiturage :</strong> Ouvrez l'appli/site <strong>Blablacar</strong>. Trouvez un trajet <strong>Vesoul ➡️ Dijon</strong> et notez l'heure du premier départ proposé.</li>
                  <li>✏️ Écrivez les prénoms de votre équipe en haut à gauche de la feuille.</li>
                  <li>🥸 Sac n°3 :
                     <ul className="list-disc ml-5 mt-1">
@@ -708,12 +790,12 @@ const BouJeuApp = () => {
           </div>
         )}
 
-        {showPortalModal && selectedPortalCode && portalChoices[selectedPortalCode] && (
+        {showPortalModal && selectedPortalCode && portalChoices[selectedPortalCode as PortalCodeType] && (
           <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-lg shadow-xl p-6 max-w-lg w-full overflow-y-auto max-h-[90vh]">
-              <h2 className="text-2xl font-bold text-[#4682B4] mb-4 text-center">{portalChoices[selectedPortalCode].name}</h2>
-              <img src={portalChoices[selectedPortalCode].image || `https://via.placeholder.com/400/CCCCCC/333333?text=${portalChoices[selectedPortalCode].name}`} alt={portalChoices[selectedPortalCode].name} className="w-full h-64 object-cover rounded-lg mb-4 border border-gray-200"/>
-              <p className="text-[#333] mb-4 text-center">{portalChoices[selectedPortalCode].description}</p>
+              <h2 className="text-2xl font-bold text-[#4682B4] mb-4 text-center">{portalChoices[selectedPortalCode as PortalCodeType].name}</h2>
+              <img src={portalChoices[selectedPortalCode as PortalCodeType].image || `https://via.placeholder.com/400/CCCCCC/333333?text=${portalChoices[selectedPortalCode as PortalCodeType].name}`} alt={portalChoices[selectedPortalCode as PortalCodeType].name} className="w-full h-64 object-cover rounded-lg mb-4 border border-gray-200"/>
+              <p className="text-[#333] mb-4 text-center">{portalChoices[selectedPortalCode as PortalCodeType].description}</p>
               <p className="text-center text-lg font-semibold text-[#708090] mb-6">Code associé : <span className="text-[#4682B4]">{selectedPortalCode}</span></p>
               <button onClick={closePortalModal} className="w-full bg-[#708090] text-white py-3 px-6 rounded-lg text-lg font-bold hover:bg-[#5a6874]">Fermer</button>
             </div>
@@ -732,7 +814,7 @@ const BouJeuApp = () => {
 
     const cumulativeCosts = vehicleHistory.reduce(
       (totals, vehicleKey) => {
-        const vehicleData = vehicles[vehicleKey as keyof typeof vehicles];
+        const vehicleData = vehicles[vehicleKey];
         if (vehicleData) {
           totals.money += vehicleData.money;
           totals.oxygen += vehicleData.oxygen;
@@ -749,8 +831,8 @@ const BouJeuApp = () => {
         <div className="mb-3 text-center">
             <span className="font-semibold">Véhicules utilisés :</span>{' '}
             {vehicleHistory.map((key, index) => (
-                <span key={index} title={vehicles[key as keyof typeof vehicles]?.name} className="text-2xl mx-1">
-                    {vehicles[key as keyof typeof vehicles]?.icon || '?'}
+                <span key={index} title={vehicles[key]?.name} className="text-2xl mx-1">
+                    {vehicles[key]?.icon || '?'}
                 </span>
             ))}
         </div>
@@ -790,11 +872,15 @@ const BouJeuApp = () => {
 
   // Page Game Over
   if (currentPage === 'gameover') {
+    const reasonMessage = gameOverReason === 'resources'
+      ? "Hélas, vous n'aviez plus assez de ressources pour continuer l'aventure... Les Bous ne pourront jamais rentrer chez eux."
+      : "Hélas, vous vous êtes trompé.e de portail... Les Bous ne pourront jamais rentrer chez eux.";
+
     return (
       <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6 text-center">
         <h1 className="text-4xl font-bold text-[#d9534f] mb-4">Game Over!</h1>
         <p className="text-xl text-[#333] mb-6">
-          Hélas, vous vous êtes trompé.e de portail... Les Bous ne pourront jamais rentrer chez eux.
+          {reasonMessage}
         </p>
         <img src="https://cdn.midjourney.com/011688bc-c565-48d2-ba74-9f2d91c38bf8/0_0.png" alt="Game Over" className="w-64 h-64 sm:w-80 sm:h-80 object-contain mb-6 rounded-lg shadow-lg"/>
         <button onClick={resetGame} className="bg-[#4682B4] text-white py-3 px-8 rounded-lg text-xl font-bold hover:bg-[#3a6d96] transition-colors">Rejouer !</button>
@@ -807,6 +893,8 @@ const BouJeuApp = () => {
   return (
     <div className="min-h-screen bg-white p-4">
        {renderHeader()}
+
+       {/* Modale de célébration d'étape */}
        {showCelebration && rewards && (
          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
            <div className="bg-white rounded-lg p-6 sm:p-8 max-w-md w-full mx-auto shadow-xl">
@@ -825,6 +913,24 @@ const BouJeuApp = () => {
          </div>
        )}
 
+        {/* Modale de blocage */}
+        {showNoMovesModal && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-xl p-6 sm:p-8 max-w-md w-full mx-auto shadow-xl">
+                <h2 className="text-2xl font-bold text-[#d9534f] mb-4 text-center">🛑 Aventure Bloquée !</h2>
+                <p className="text-base sm:text-lg mb-6 text-center">
+                    Malheureusement, vous n'avez plus assez de ressources pour acheter un moyen de transport, même en effectuant tous les échanges possibles. L'aventure s'arrête ici pour les Bous...
+                </p>
+                <p className="text-lg font-bold mb-6 text-center">Confirmez-vous l'abandon de la mission ?</p>
+                <div className="flex gap-4">
+                    <button onClick={handleConfirmNoMoves} className="w-full h-12 bg-[#d9534f] text-white rounded-lg font-bold hover:bg-[#c9302c] transition-colors">Confirmer l'abandon</button>
+                </div>
+                </div>
+            </div>
+        )}
+
+
+       {/* Contenu principal de la page de jeu */}
        <div className="bg-[#f5f5f5] rounded-lg shadow-md p-4 mb-4">
          <h2 className="text-xl font-bold mb-4 text-[#4682B4]">
            Étape {currentStep}:
@@ -845,7 +951,6 @@ const BouJeuApp = () => {
                <div className="text-4xl mb-3">{item.icon}</div>
                <h3 className="text-lg font-bold text-[#333] mb-2 text-center">{item.name}</h3>
                <p className="text-sm text-[#666] text-center">{item.description}</p>
-               {/* Utilisation des icônes SVG */}
                <div className="mt-3">
                  {inventory[key as keyof typeof inventory] ? <CheckIcon /> : <CrossIcon />}
                </div>
@@ -862,11 +967,12 @@ const BouJeuApp = () => {
            <p className="text-[#333]">{resourceIcons.time} {resourceNamesFR.time}: {resources.time}</p>
          </div>
          <h4 className="text-md font-bold mb-2 text-[#4682B4]">Échanger des ressources</h4>
+         {/* Texte des boutons mis à jour pour correspondre aux nouveaux taux */}
          <div className="grid grid-cols-2 gap-2">
-           <button onClick={() => exchangeResources('money', 'oxygen')} className="bg-[#4682B4] text-white p-2 rounded hover:bg-[#3a6d96]">200 {resourceIcons.money} ➡️ 10 {resourceIcons.oxygen}</button>
+           <button onClick={() => exchangeResources('money', 'oxygen')} className="bg-[#4682B4] text-white p-2 rounded hover:bg-[#3a6d96]">100 {resourceIcons.money} ➡️ 10 {resourceIcons.oxygen}</button>
            <button onClick={() => exchangeResources('money', 'time')} className="bg-[#4682B4] text-white p-2 rounded hover:bg-[#3a6d96]">100 {resourceIcons.money} ➡️ 10 {resourceIcons.time}</button>
-           <button onClick={() => exchangeResources('time', 'money')} className="bg-[#4682B4] text-white p-2 rounded hover:bg-[#3a6d96]">200 {resourceIcons.time} ➡️ 10 {resourceIcons.money}</button>
-           <button onClick={() => exchangeResources('oxygen', 'money')} className="bg-[#4682B4] text-white p-2 rounded hover:bg-[#3a6d96]">100 {resourceIcons.oxygen} ➡️ 10 {resourceIcons.money}</button>
+           <button onClick={() => exchangeResources('time', 'money')} className="bg-[#4682B4] text-white p-2 rounded hover:bg-[#3a6d96]">100 {resourceIcons.time} ➡️ 10 {resourceIcons.money}</button>
+           <button onClick={() => exchangeResources('oxygen', 'money')} className="bg-[#4682B4] text-white p-2 rounded hover:bg-[#3a6d96]">50 {resourceIcons.oxygen} ➡️ 10 {resourceIcons.money}</button>
          </div>
        </div>
 
@@ -876,17 +982,29 @@ const BouJeuApp = () => {
            <div className="grid grid-cols-2 gap-2">
              {Object.entries(vehicles).map(([key, vehicle]) => {
                const isAvailable = !vehicle.availableFromStep || currentStep >= vehicle.availableFromStep;
+               const canAffordDirectly = resources.money >= vehicle.money && resources.oxygen >= vehicle.oxygen && resources.time >= vehicle.time;
+               const buttonClass = `p-3 rounded-lg border flex flex-col items-center justify-between ${
+                    !isAvailable
+                        ? 'bg-gray-300 border-gray-400 text-gray-500 cursor-not-allowed opacity-60'
+                        : canAffordDirectly
+                            ? 'bg-[#f5f5f5] border-[#ddd] hover:bg-[#e6f7ff]'
+                            : 'bg-gray-100 border-gray-300 text-gray-500 opacity-80'
+               }`;
+
                return (
-                 <button key={key} className={`p-3 rounded-lg border flex flex-col items-center justify-between ${isAvailable ? 'bg-[#f5f5f5] border-[#ddd] hover:bg-[#e6f7ff]' : 'bg-[#eee] border-[#eee] cursor-not-allowed'}`} onClick={() => isAvailable && buyVehicle(key)} disabled={!isAvailable}>
+                 <button key={key} className={buttonClass} onClick={() => isAvailable && buyVehicle(key)} disabled={!isAvailable}>
                    <div className="flex items-center mb-2">
                      <span className="mr-2 text-lg">{vehicle.icon}</span>
-                     <span className={`font-bold ${isAvailable ? 'text-[#777]' : 'text-[#aaa]'}`}>{vehicle.name}</span>
+                     <span className={`font-bold ${isAvailable ? (canAffordDirectly ? 'text-[#777]' : 'text-gray-600') : ''}`}>{vehicle.name}</span>
                    </div>
                    <div className="text-sm">
-                     <p className={isAvailable ? 'text-[#777]' : 'text-[#aaa]'}>{resourceIcons.money} {vehicle.money}</p>
-                     <p className={isAvailable ? 'text-[#777]' : 'text-[#aaa]'}>{resourceIcons.oxygen} {vehicle.oxygen}</p>
-                     <p className={isAvailable ? 'text-[#777]' : 'text-[#aaa]'}>{resourceIcons.time} {vehicle.time}</p>
+                     <p className={isAvailable ? (canAffordDirectly ? 'text-[#777]' : 'text-gray-500') : ''}>{resourceIcons.money} {vehicle.money}</p>
+                     <p className={isAvailable ? (canAffordDirectly ? 'text-[#777]' : 'text-gray-500') : ''}>{resourceIcons.oxygen} {vehicle.oxygen}</p>
+                     <p className={isAvailable ? (canAffordDirectly ? 'text-[#777]' : 'text-gray-500') : ''}>{resourceIcons.time} {vehicle.time}</p>
                    </div>
+                   {!isAvailable && vehicle.availableFromStep && (
+                     <p className="text-xs text-red-500 mt-1">Dispo. étape {vehicle.availableFromStep}</p>
+                   )}
                  </button>
                );
              })}
@@ -910,37 +1028,32 @@ const BouJeuApp = () => {
          </div>
        )}
 
-       {/* <<< MODIFICATION ICI : Calcul des jauges dans la confirmation véhicule >>> */}
       {showVehicleConfirmation && vehicleToConfirm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl p-6 sm:p-8 max-w-md w-full mx-auto shadow-xl">
             <div className="flex items-center gap-4 mb-6">
-              <div className="text-5xl sm:text-6xl">{vehicles[vehicleToConfirm as keyof typeof vehicles].icon}</div>
+              <div className="text-5xl sm:text-6xl">{vehicles[vehicleToConfirm].icon}</div>
               <div>
-                <h2 className="text-xl sm:text-2xl font-bold text-[#4682B4]">{vehicles[vehicleToConfirm as keyof typeof vehicles].name}</h2>
+                <h2 className="text-xl sm:text-2xl font-bold text-[#4682B4]">{vehicles[vehicleToConfirm].name}</h2>
                 <p className="text-sm sm:text-base text-[#708090]">Confirmer la sélection</p>
               </div>
             </div>
             <div className="bg-[#f5f5f5] rounded-lg p-4 mb-6">
               <h3 className="font-bold text-[#4682B4] mb-3">Coût du voyage</h3>
               <div className="space-y-2 text-sm sm:text-base">
-                <div className="flex justify-between items-center"><span>{resourceIcons.money} {resourceNamesFR.money}</span><span className="font-bold">{vehicles[vehicleToConfirm as keyof typeof vehicles].money}</span></div>
-                <div className="flex justify-between items-center"><span>{resourceIcons.oxygen} {resourceNamesFR.oxygen}</span><span className="font-bold">{vehicles[vehicleToConfirm as keyof typeof vehicles].oxygen}</span></div>
-                <div className="flex justify-between items-center"><span>{resourceIcons.time} {resourceNamesFR.time}</span><span className="font-bold">{vehicles[vehicleToConfirm as keyof typeof vehicles].time}</span></div>
+                <div className="flex justify-between items-center"><span>{resourceIcons.money} {resourceNamesFR.money}</span><span className="font-bold">{vehicles[vehicleToConfirm].money}</span></div>
+                <div className="flex justify-between items-center"><span>{resourceIcons.oxygen} {resourceNamesFR.oxygen}</span><span className="font-bold">{vehicles[vehicleToConfirm].oxygen}</span></div>
+                <div className="flex justify-between items-center"><span>{resourceIcons.time} {resourceNamesFR.time}</span><span className="font-bold">{vehicles[vehicleToConfirm].time}</span></div>
               </div>
             </div>
             <div className="mb-8">
               <h3 className="font-bold text-[#4682B4] mb-3">Ressources restantes après voyage</h3>
               <div className="space-y-3">
                 {(['money', 'oxygen', 'time'] as const).map(resKey => {
-                  const cost = vehicles[vehicleToConfirm as keyof typeof vehicles][resKey];
+                  const cost = vehicles[vehicleToConfirm][resKey];
                   const remaining = resources[resKey] - cost;
-                  // Utiliser la ressource au début de l'étape comme référence pour le pourcentage
                   const initialForStep = resourcesAtStepStart[resKey];
-                  // Calculer le pourcentage restant par rapport au début de l'étape
-                  // Gérer le cas où la ressource initiale est 0 pour éviter la division par zéro
                   const percentage = initialForStep > 0 ? Math.max(0, (remaining / initialForStep) * 100) : 0;
-                  // Déterminer si le niveau est bas par rapport au début de l'étape
                   const isLow = initialForStep > 0 ? (remaining / initialForStep) < 0.2 : (remaining <= 0);
                   const insufficient = remaining < 0;
 
@@ -955,9 +1068,7 @@ const BouJeuApp = () => {
                           className={`h-full transition-all duration-300 rounded-full ${
                             insufficient ? 'bg-red-600' : (isLow ? 'bg-orange-400' : 'bg-[#4682B4]')
                           }`}
-                          // La largeur est basée sur le pourcentage restant par rapport au début de l'étape
-                          // Si insuffisant, la barre sera visuellement vide (width 0 via Math.max), mais colorée en rouge.
-                          style={{ width: `${insufficient ? 100 : percentage}%` }} // Si insuffisant, barre rouge pleine pour signaler l'erreur
+                          style={{ width: `${insufficient ? 100 : percentage}%` }}
                         ></div>
                       </div>
                       {insufficient && <p className="text-xs text-red-600 mt-1">Ressources insuffisantes !</p>}
@@ -968,12 +1079,11 @@ const BouJeuApp = () => {
             </div>
             <div className="flex gap-3 sm:gap-4">
               <button onClick={() => {setShowVehicleConfirmation(false); setVehicleToConfirm(null);}} className="flex-1 h-11 sm:h-12 bg-gray-500 text-white rounded-lg font-bold hover:bg-gray-600 transition-colors text-sm sm:text-base">Annuler</button>
-              <button onClick={() => confirmVehicle(vehicleToConfirm!)} disabled={resources.money < vehicles[vehicleToConfirm as keyof typeof vehicles].money || resources.oxygen < vehicles[vehicleToConfirm as keyof typeof vehicles].oxygen || resources.time < vehicles[vehicleToConfirm as keyof typeof vehicles].time} className={`flex-1 h-11 sm:h-12 text-white rounded-lg font-bold transition-colors text-sm sm:text-base ${(resources.money < vehicles[vehicleToConfirm as keyof typeof vehicles].money || resources.oxygen < vehicles[vehicleToConfirm as keyof typeof vehicles].oxygen || resources.time < vehicles[vehicleToConfirm as keyof typeof vehicles].time) ? 'bg-gray-400 cursor-not-allowed' : 'bg-[#5cb85c] hover:bg-[#4cae4c]'}`}>Confirmer</button>
+              <button onClick={() => confirmVehicle(vehicleToConfirm!)} disabled={resources.money < vehicles[vehicleToConfirm].money || resources.oxygen < vehicles[vehicleToConfirm].oxygen || resources.time < vehicles[vehicleToConfirm].time} className={`flex-1 h-11 sm:h-12 text-white rounded-lg font-bold transition-colors text-sm sm:text-base ${(resources.money < vehicles[vehicleToConfirm].money || resources.oxygen < vehicles[vehicleToConfirm].oxygen || resources.time < vehicles[vehicleToConfirm].time) ? 'bg-gray-400 cursor-not-allowed' : 'bg-[#5cb85c] hover:bg-[#4cae4c]'}`}>Confirmer</button>
             </div>
           </div>
         </div>
       )}
-       {/* <<< FIN MODIFICATION >>> */}
 
 
       {showExchangeConfirmation && exchangeDetails && (
@@ -997,32 +1107,21 @@ const BouJeuApp = () => {
               <h3 className="font-bold text-[#4682B4] mb-3">Ressources après échange</h3>
               <div className="space-y-3">
                 {(['money', 'oxygen', 'time'] as const).map(resKey => {
-                  // Calcul des valeurs avant/après
                   const currentAmount = resources[resKey];
                   let finalAmount = currentAmount;
                   if (resKey === exchangeDetails.from) { finalAmount -= exchangeDetails.amountFrom; }
                   if (resKey === exchangeDetails.to) { finalAmount += exchangeDetails.amountTo; }
-
-                  // Détermination du maximum pertinent pour cette transaction (pour le calcul du %)
                   const relevantMax = Math.max(currentAmount, finalAmount);
-
-                  // Calcul du pourcentage final par rapport au maximum pertinent
                   const percentage = relevantMax > 0 ? Math.max(0, (finalAmount / relevantMax) * 100) : 0;
-                  // Calcul du pourcentage actuel (avant échange) pour l'affichage en cas de ressources insuffisantes
                   const currentPercentage = relevantMax > 0 ? Math.max(0, (currentAmount / relevantMax) * 100) : 0;
-
-                  // Détermination si le niveau est bas (par rapport au max pertinent)
                   const isLow = relevantMax > 0 ? (finalAmount / relevantMax) < 0.2 : (finalAmount <= 0);
-                  // Vérification si les ressources sont insuffisantes pour l'échange
                   const insufficient = resources[exchangeDetails.from] < exchangeDetails.amountFrom;
-                  // Vérification si la ressource est affectée par l'échange
                   const isAffected = resKey === exchangeDetails.from || resKey === exchangeDetails.to;
 
                   return (
                     <div key={resKey}>
                       <div className="flex justify-between mb-1 text-sm sm:text-base">
                         <span>{resourceIcons[resKey]} {resourceNamesFR[resKey]}</span>
-                        {/* Affichage de la transition */}
                         <span className={`${(insufficient && resKey === exchangeDetails.from) ? 'text-red-600 font-bold' : ''}`}>
                            {isAffected
                                ? (resKey === exchangeDetails.from
@@ -1077,12 +1176,12 @@ const BouJeuApp = () => {
         </div>
       )}
 
-      {showPortalModal && selectedPortalCode && portalChoices[selectedPortalCode] && currentPage === 'game' && (
+      {showPortalModal && selectedPortalCode && portalChoices[selectedPortalCode as PortalCodeType] && currentPage === 'game' && (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl p-6 max-w-lg w-full overflow-y-auto max-h-[90vh]">
-            <h2 className="text-2xl font-bold text-[#4682B4] mb-4 text-center">{portalChoices[selectedPortalCode].name}</h2>
-            <img src={portalChoices[selectedPortalCode].image || `https://via.placeholder.com/400/CCCCCC/333333?text=${portalChoices[selectedPortalCode].name}`} alt={portalChoices[selectedPortalCode].name} className="w-full h-64 object-cover rounded-lg mb-4 border border-gray-200"/>
-            <p className="text-[#333] mb-4 text-center">{portalChoices[selectedPortalCode].description}</p>
+            <h2 className="text-2xl font-bold text-[#4682B4] mb-4 text-center">{portalChoices[selectedPortalCode as PortalCodeType].name}</h2>
+            <img src={portalChoices[selectedPortalCode as PortalCodeType].image || `https://via.placeholder.com/400/CCCCCC/333333?text=${portalChoices[selectedPortalCode as PortalCodeType].name}`} alt={portalChoices[selectedPortalCode as PortalCodeType].name} className="w-full h-64 object-cover rounded-lg mb-4 border border-gray-200"/>
+            <p className="text-[#333] mb-4 text-center">{portalChoices[selectedPortalCode as PortalCodeType].description}</p>
             <p className="text-center text-lg font-semibold text-[#708090] mb-6">Code associé : <span className="text-[#4682B4]">{selectedPortalCode}</span></p>
             <button onClick={closePortalModal} className="w-full bg-[#708090] text-white py-3 px-6 rounded-lg text-lg font-bold hover:bg-[#5a6874]">Fermer</button>
           </div>
