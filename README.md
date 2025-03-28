@@ -1,6 +1,6 @@
 # bou-jeu
 
-BouJeuApp est une application de jeu d'aventure et de gestion de ressources développée en React Native. Dans ce jeu, les joueurs aident des créatures extraterrestres appelées "Bous" à retourner sur leur planète d'origine après un atterrissage forcé sur Terre.
+BouJeuApp est une application de jeu d'aventure et de gestion de ressources développée en React Native, pour le jeu d'évasion BOU-JEU. Dans ce jeu, les joueurs aident des créatures extraterrestres appelées "Bous" à retourner sur leur planète d'origine après un atterrissage forcé sur Terre. Ils doivent, pour cela, relever différents défis liés à la mobilité durable.
 
 ## Concept du jeu
 
@@ -31,4 +31,4 @@ L'application propose une interface soignée avec :
 - Des mécanismes d'échange de ressources
 - Des instructions détaillées pour chaque étape
 
-Cette application combine stratégie, gestion de ressources et résolution de problèmes dans un univers ludique et éducatif, tout en valorisant le patrimoine régional de la Bourgogne-Franche-Comté.
+Cette application combine stratégie, gestion de ressources et résolution de problèmes dans un univers ludique et éducatif, pour sensibiliser à l'écomobilité, la multimodalité et l'accès aux permis, tout en valorisant le patrimoine régional de la Bourgogne-Franche-Comté.
