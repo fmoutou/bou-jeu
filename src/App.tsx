@@ -58,6 +58,9 @@ const lightGreenColor = '#e7f4e7';
 const instructionsBgColor = '#f3f4f6';
 const tipsBgColor = '#fef9c3';
 const warningBgColor = '#fee2e2';
+const timerNormalColor = 'text-gray-700';
+const timerWarningColor = 'text-orange-500';
+const timerDangerColor = 'text-red-600';
 
 
 // --- Icônes des Ressources ---
@@ -78,17 +81,24 @@ const resourceNamesFR = {
 const initialResources = {
   money: 1250,
   oxygen: 300,
-  time: 800 // Ajusté
+  time: 800
 };
 
 // --- Taux d'échange constants ---
+// <<< MODIFICATION : Retour aux taux d'échange validés >>>
 const exchangeRates = {
-    moneyToOxygen: { amountFrom: 100, amountTo: 10 }, // Ajusté
-    moneyToTime:   { amountFrom: 100, amountTo: 10 }, // Inchangé
-    timeToMoney:   { amountFrom: 100, amountTo: 10 }, // Ajusté
-    oxygenToMoney: { amountFrom: 50, amountTo: 10 },  // Ajusté
+    moneyToOxygen: { amountFrom: 100, amountTo: 10 },
+    moneyToTime:   { amountFrom: 100, amountTo: 10 }, // Retour à 100:10
+    timeToMoney:   { amountFrom: 100, amountTo: 10 },
+    oxygenToTime:  { amountFrom: 20,  amountTo: 10 },
 };
+// <<< FIN MODIFICATION >>>
 
+
+// --- Constantes du Timer ---
+const COUNTDOWN_DURATION_SECONDS = 3600;
+const DRAIN_AMOUNT_PER_MINUTE = 10;
+const WARNING_THRESHOLD_SECONDS = 1200; // 20 minutes
 
 // --- Types ---
 interface Vehicle {
@@ -101,6 +111,7 @@ interface Vehicle {
 }
 
 type ResourceType = keyof typeof initialResources;
+type GameOverReason = 'portal' | 'resources' | 'time' | null;
 
 const BouJeuApp = () => {
   const [currentPage, setCurrentPage] = useState('splash'); // Page actuelle
@@ -143,7 +154,13 @@ const BouJeuApp = () => {
   } | null>(null);
 
   const [showNoMovesModal, setShowNoMovesModal] = useState(false); // Afficher la modale de blocage
-  const [gameOverReason, setGameOverReason] = useState<'portal' | 'resources' | null>(null); // Raison du game over
+  const [gameOverReason, setGameOverReason] = useState<GameOverReason>(null); // Raison du game over
+
+  // États pour le Timer
+  const [countdownSeconds, setCountdownSeconds] = useState(COUNTDOWN_DURATION_SECONDS);
+  const [isCountdownRunning, setIsCountdownRunning] = useState(false);
+  const [isTimeDraining, setIsTimeDraining] = useState(false);
+  const [hasTimerStarted, setHasTimerStarted] = useState(false);
 
 
   // Objets de l'inventaire
@@ -186,53 +203,45 @@ const BouJeuApp = () => {
     setResourcesAtStepStart(resources);
   }, [currentStep]);
 
-  // <<< MODIFICATION : Logique canAffordAnyVehicle Corrigée >>>
-  // Fonction pour vérifier si un véhicule est achetable, même potentiellement (logique corrigée)
+  // <<< MODIFICATION : canAffordAnyVehicle utilise les taux finaux >>>
+  // Fonction pour vérifier si un véhicule est achetable, même potentiellement
   const canAffordAnyVehicle = (currentResources: typeof resources, step: number): boolean => {
     for (const key in vehicles) {
         const vehicle = vehicles[key];
         const isStepAvailable = !vehicle.availableFromStep || step >= vehicle.availableFromStep;
 
         if (isStepAvailable) {
-            // 1. Vérifier l'achat direct
             if (currentResources.money >= vehicle.money && currentResources.oxygen >= vehicle.oxygen && currentResources.time >= vehicle.time) {
                 console.log(`CAN AFFORD CHECK: Véhicule ${vehicle.name} achetable directement.`);
                 return true;
             }
 
-            // 2. Vérification d'achat potentiel réaliste (utilisant les surplus)
             const moneyDeficit = Math.max(0, vehicle.money - currentResources.money);
             const oxygenDeficit = Math.max(0, vehicle.oxygen - currentResources.oxygen);
             const timeDeficit = Math.max(0, vehicle.time - currentResources.time);
 
-            // Surplus après avoir payé le coût de base DANS CETTE RESSOURCE
             const moneySurplus = Math.max(0, currentResources.money - vehicle.money);
             const oxygenSurplus = Math.max(0, currentResources.oxygen - vehicle.oxygen);
             const timeSurplus = Math.max(0, currentResources.time - vehicle.time);
 
             let canCoverMoney = moneyDeficit === 0;
             if (moneyDeficit > 0) {
-                const moneyFromOxygen = Math.floor(oxygenSurplus / exchangeRates.oxygenToMoney.amountFrom) * exchangeRates.oxygenToMoney.amountTo;
                 const moneyFromTime = Math.floor(timeSurplus / exchangeRates.timeToMoney.amountFrom) * exchangeRates.timeToMoney.amountTo;
-                if (moneyFromOxygen + moneyFromTime >= moneyDeficit) {
-                    canCoverMoney = true;
-                }
+                if (moneyFromTime >= moneyDeficit) canCoverMoney = true;
             }
 
             let canCoverOxygen = oxygenDeficit === 0;
             if (oxygenDeficit > 0) {
                 const oxygenFromMoney = Math.floor(moneySurplus / exchangeRates.moneyToOxygen.amountFrom) * exchangeRates.moneyToOxygen.amountTo;
-                if (oxygenFromMoney >= oxygenDeficit) {
-                    canCoverOxygen = true;
-                }
+                if (oxygenFromMoney >= oxygenDeficit) canCoverOxygen = true;
             }
 
             let canCoverTime = timeDeficit === 0;
             if (timeDeficit > 0) {
+                // Utilise le taux moneyToTime de 100:10
                 const timeFromMoney = Math.floor(moneySurplus / exchangeRates.moneyToTime.amountFrom) * exchangeRates.moneyToTime.amountTo;
-                if (timeFromMoney >= timeDeficit) {
-                    canCoverTime = true;
-                }
+                const timeFromOxygen = Math.floor(oxygenSurplus / exchangeRates.oxygenToTime.amountFrom) * exchangeRates.oxygenToTime.amountTo;
+                if (timeFromMoney + timeFromOxygen >= timeDeficit) canCoverTime = true;
             }
 
             if (canCoverMoney && canCoverOxygen && canCoverTime) {
@@ -241,7 +250,6 @@ const BouJeuApp = () => {
             }
         }
     }
-
     console.log("CAN AFFORD CHECK: Aucun véhicule achetable, même potentiellement.");
     return false;
   };
@@ -251,13 +259,74 @@ const BouJeuApp = () => {
   // Vérifier la possibilité de continuer
   useEffect(() => {
     if (currentPage === 'game' && !currentVehicle && !showNoMovesModal && !showCelebration) {
-      // Utilise la fonction corrigée
       if (!canAffordAnyVehicle(resources, currentStep)) {
         setMessage("Il semble que vous soyez à court de ressources pour continuer...");
         setShowNoMovesModal(true);
       }
     }
   }, [resources, currentPage, currentVehicle, currentStep, showNoMovesModal, showCelebration]);
+
+  // --- Logique du Timer ---
+  useEffect(() => {
+    if (currentStep === 1 && (currentPage === 'game' || currentPage === 'instructions') && !hasTimerStarted) {
+      console.log("TIMER: Démarrage du compte à rebours initial.");
+      setCountdownSeconds(COUNTDOWN_DURATION_SECONDS);
+      setIsCountdownRunning(true);
+      setHasTimerStarted(true);
+      setIsTimeDraining(false);
+    }
+  }, [currentPage, currentStep, hasTimerStarted]);
+
+  useEffect(() => {
+    if (!isCountdownRunning || currentPage === 'victory' || currentPage === 'gameover') return;
+    console.log("TIMER: Intervalle du compte à rebours actif.");
+    const intervalId = setInterval(() => {
+      setCountdownSeconds(prevSeconds => {
+        if (prevSeconds <= 1) {
+          console.log("TIMER: Compte à rebours terminé, passage au drain.");
+          clearInterval(intervalId);
+          setIsCountdownRunning(false);
+          setIsTimeDraining(true);
+          return 0;
+        }
+        return prevSeconds - 1;
+      });
+    }, 1000);
+    return () => {
+        console.log("TIMER: Nettoyage de l'intervalle du compte à rebours.");
+        clearInterval(intervalId);
+    }
+  }, [isCountdownRunning, currentPage]);
+
+  useEffect(() => {
+    if (!isTimeDraining || currentPage === 'victory' || currentPage === 'gameover') return;
+    console.log("TIMER: Intervalle du drain de temps actif.");
+    const intervalId = setInterval(() => {
+        setResources(prevResources => {
+            if (prevResources.time <= 0) {
+                console.log("TIMER: Temps déjà écoulé dans le drain.");
+                return prevResources;
+            }
+            const newTime = Math.max(0, prevResources.time - DRAIN_AMOUNT_PER_MINUTE);
+            console.log(`TIMER: Drain de temps - ${prevResources.time} -> ${newTime}`);
+            return { ...prevResources, time: newTime };
+        });
+    }, 60000);
+    return () => {
+        console.log("TIMER: Nettoyage de l'intervalle du drain de temps.");
+        clearInterval(intervalId);
+    }
+  }, [isTimeDraining, currentPage]);
+
+  useEffect(() => {
+      if (resources.time <= 0 && isTimeDraining && currentPage !== 'gameover' && currentPage !== 'victory') {
+          console.log("TIMER: Défaite par manque de temps détectée.");
+          setIsTimeDraining(false);
+          setGameOverReason('time');
+          setCurrentPage('gameover');
+      }
+  }, [resources.time, isTimeDraining, currentPage]);
+  // --- Fin Logique du Timer ---
 
 
   // Initier l'achat de véhicule
@@ -292,7 +361,6 @@ const BouJeuApp = () => {
 
   // Initier l'échange de ressources
   const exchangeResources = (from: ResourceType, to: ResourceType) => {
-    // Utilise les taux d'échange constants
     let amountFrom = 0;
     let amountTo = 0;
     let fromFR = '', toFR = '';
@@ -309,15 +377,16 @@ const BouJeuApp = () => {
         amountFrom = exchangeRates.timeToMoney.amountFrom; amountTo = exchangeRates.timeToMoney.amountTo;
         fromFR = resourceNamesFR.time; toFR = resourceNamesFR.money;
     }
-    else if (from === 'oxygen' && to === 'money') {
-        amountFrom = exchangeRates.oxygenToMoney.amountFrom; amountTo = exchangeRates.oxygenToMoney.amountTo;
-        fromFR = resourceNamesFR.oxygen; toFR = resourceNamesFR.money;
+    else if (from === 'oxygen' && to === 'time') {
+        amountFrom = exchangeRates.oxygenToTime.amountFrom; amountTo = exchangeRates.oxygenToTime.amountTo;
+        fromFR = resourceNamesFR.oxygen; toFR = resourceNamesFR.time;
     }
     else return;
 
     setExchangeDetails({ from: from, to: to, amountFrom: amountFrom, amountTo: amountTo, fromResourceFR: fromFR, toResourceFR: toFR });
     setShowExchangeConfirmation(true);
   };
+
 
   // Confirmer l'échange
   const confirmExchange = () => {
@@ -428,6 +497,10 @@ const BouJeuApp = () => {
     setResourcesAtStepStart({ ...initialResources });
     setShowNoMovesModal(false);
     setGameOverReason(null);
+    setCountdownSeconds(COUNTDOWN_DURATION_SECONDS);
+    setIsCountdownRunning(false);
+    setIsTimeDraining(false);
+    setHasTimerStarted(false);
   };
 
 
@@ -461,6 +534,37 @@ const BouJeuApp = () => {
   // Fermer modal détails portail
   const closePortalModal = () => { setShowPortalModal(false); setSelectedPortalCode(null); };
 
+  // Formatter le temps pour l'affichage
+  const formatTime = (totalSeconds: number): string => {
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+  };
+
+  // Composant pour afficher le timer
+  const TimerDisplay = () => {
+    if (!hasTimerStarted || currentPage === 'splash' || currentPage === 'home' || currentPage === 'victory' || currentPage === 'gameover') {
+        return null;
+    }
+
+    let textColor = timerNormalColor;
+    let displayText = formatTime(countdownSeconds);
+
+    if (isTimeDraining) {
+        textColor = timerDangerColor;
+        displayText = `${formatTime(resources.time)} (-${DRAIN_AMOUNT_PER_MINUTE}/min)`;
+    } else if (isCountdownRunning && countdownSeconds <= WARNING_THRESHOLD_SECONDS) {
+        textColor = timerWarningColor;
+    }
+
+    return (
+      <div className={`fixed top-2 right-4 text-2xl font-bold p-2 bg-white bg-opacity-80 rounded-lg shadow ${textColor} z-40`}>
+        ⏱️ {displayText}
+      </div>
+    );
+  };
+
+
   // --- AFFICHAGE DES PAGES ---
 
   // Page Splash
@@ -481,12 +585,13 @@ const BouJeuApp = () => {
   const renderHeader = () => {
     if (currentPage !== 'splash' && currentPage !== 'victory' && currentPage !== 'gameover' && currentPage !== 'home') {
       return (
-        <div className="flex justify-center items-center py-4">
+        <div className="flex justify-center items-center py-4 relative">
           <img
             src="https://i.ibb.co/mVs3C5tG/LOGO-BOU-JEU.png"
             alt="BOU-JEU Logo"
             className="w-40 h-24 object-contain"
           />
+          <TimerDisplay />
         </div>
       );
     }
@@ -506,7 +611,7 @@ const BouJeuApp = () => {
                 <h3 className="text-xl font-bold mb-4 text-[#4682B4]">L'histoire</h3>
                 <p className="mb-4 text-[#333]">
                   Les Bous, des créatures venues d'une autre planète, ont atterri en catastrophe sur Terre.
-                  Leur magie s'affaiblit, et ils ont besoin de votre aide pour rentrer chez eux !
+                  Mais leur magie s'affaiblit, chaque minute. Ils ont besoin de votre aide pour se déplacer et rentrer rapidement chez eux !
                 </p>
                 <p className="mb-4 text-[#333]">
                   Votre mission est d'activer un portail magique caché en Bourgogne-Franche-Comté.
@@ -543,12 +648,14 @@ const BouJeuApp = () => {
                 </p>
                 <ul className="mb-4 ml-4 space-y-2 list-none">
                    <li><span className="font-bold">{resourceIcons.money} {resourceNamesFR.money}:</span> Achetez des véhicules et échangez contre d'autres ressources.</li>
-                   <li><span className="font-bold">{resourceIcons.oxygen} {resourceNamesFR.oxygen}:</span> Nécessaire à la respiration des Bous. Ils en consomment plus selon les véhicules.</li>
+                   <li><span className="font-bold">{resourceIcons.oxygen} {resourceNamesFR.oxygen}:</span> Nécessaire à la respiration des Bous. Ils en consomment plus selon les véhicules. C'est une ressource stratégique.</li>
                    <li><span className="font-bold">{resourceIcons.time} {resourceNamesFR.time}:</span> Certains déplacements prennent plus de temps. Le temps est précieux !</li>
                  </ul>
+                 <p className="mb-2 font-semibold text-[#d9534f]">
+                    ⚠️ Attention : Après 1h de jeu, votre ressource Temps diminuera de 10, chaque minute !
+                 </p>
                 <p className="mb-2 text-[#333]">
-                  Chaque véhicule a un coût. Choisissez bien !
-                  Vous pouvez échanger vos ressources, mais attention aux taux de change.
+                  Chaque trajet a un coût. Vous pouvez échanger vos ressources, mais attention aux taux de change. Choisissez bien !
                 </p>
                 <p className="mb-0 text-[#333]">
                   <span className="font-bold">Pour finir, répondez à l'énigme de chaque étape.</span>
@@ -872,9 +979,16 @@ const BouJeuApp = () => {
 
   // Page Game Over
   if (currentPage === 'gameover') {
-    const reasonMessage = gameOverReason === 'resources'
-      ? "Hélas, vous n'aviez plus assez de ressources pour continuer l'aventure... Les Bous ne pourront jamais rentrer chez eux."
-      : "Hélas, vous vous êtes trompé.e de portail... Les Bous ne pourront jamais rentrer chez eux.";
+    let reasonMessage = '';
+    if (gameOverReason === 'resources') {
+        reasonMessage = "Hélas, vous n'aviez plus assez de ressources pour continuer l'aventure... Les Bous ne pourront jamais rentrer chez eux.";
+    } else if (gameOverReason === 'portal') {
+        reasonMessage = "Hélas, vous vous êtes trompé.e de portail... Les Bous ne pourront jamais rentrer chez eux.";
+    } else if (gameOverReason === 'time') {
+        reasonMessage = "Hélas, le temps imparti est écoulé... Les Bous ne pourront jamais rentrer chez eux.";
+    } else {
+        reasonMessage = "Hélas, l'aventure s'arrête ici pour les Bous...";
+    }
 
     return (
       <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6 text-center">
@@ -967,12 +1081,12 @@ const BouJeuApp = () => {
            <p className="text-[#333]">{resourceIcons.time} {resourceNamesFR.time}: {resources.time}</p>
          </div>
          <h4 className="text-md font-bold mb-2 text-[#4682B4]">Échanger des ressources</h4>
-         {/* Texte des boutons mis à jour pour correspondre aux nouveaux taux */}
+         {/* Texte des boutons mis à jour */}
          <div className="grid grid-cols-2 gap-2">
            <button onClick={() => exchangeResources('money', 'oxygen')} className="bg-[#4682B4] text-white p-2 rounded hover:bg-[#3a6d96]">100 {resourceIcons.money} ➡️ 10 {resourceIcons.oxygen}</button>
            <button onClick={() => exchangeResources('money', 'time')} className="bg-[#4682B4] text-white p-2 rounded hover:bg-[#3a6d96]">100 {resourceIcons.money} ➡️ 10 {resourceIcons.time}</button>
            <button onClick={() => exchangeResources('time', 'money')} className="bg-[#4682B4] text-white p-2 rounded hover:bg-[#3a6d96]">100 {resourceIcons.time} ➡️ 10 {resourceIcons.money}</button>
-           <button onClick={() => exchangeResources('oxygen', 'money')} className="bg-[#4682B4] text-white p-2 rounded hover:bg-[#3a6d96]">50 {resourceIcons.oxygen} ➡️ 10 {resourceIcons.money}</button>
+           <button onClick={() => exchangeResources('oxygen', 'time')} className="bg-[#4682B4] text-white p-2 rounded hover:bg-[#3a6d96]">20 {resourceIcons.oxygen} ➡️ 10 {resourceIcons.time}</button>
          </div>
        </div>
 
